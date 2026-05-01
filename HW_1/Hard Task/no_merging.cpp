@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 #include <mutex>
+#include <queue>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -32,6 +33,17 @@ struct MarketDataEvent {
     int32_t ts_in_delta = 0;
     uint32_t sequence = 0;
     std::string symbol = "";
+
+    bool operator<(const MarketDataEvent& other) const {
+        if (ts_recv != other.ts_recv) {
+            return ts_recv < other.ts_recv;
+        }
+        if (ts_event != other.ts_event) {
+            return ts_event < other.ts_event;
+        }
+
+        return sequence < other.sequence;
+    }
 };
 
 static int64_t parsePrice(const std::string &s) {
@@ -179,17 +191,13 @@ void processMarketDataEvent(const MarketDataEvent &e) {
             << "\n";
 }
 
-void processOneFile(const std::string& filename) {
+std::vector<MarketDataEvent> processOneFile(const std::string& filename) {
+    std::vector<MarketDataEvent> events;
     std::ifstream in(filename);
     if (!in) {
         std::cerr << "Error: could not open file: " << filename << "\n";
-        return;
+        return {};
     }
-
-    std::size_t count = 0;
-    uint64_t firstTs = UINT64_MAX, lastTs = UINT64_MAX;
-    std::vector<MarketDataEvent> firstTen;
-    std::deque<MarketDataEvent> lastTen;
 
     std::string line;
     while (std::getline(in, line)) {
@@ -201,26 +209,60 @@ void processOneFile(const std::string& filename) {
             json j = json::parse(line);
             e = parseEvent(j);
         } catch (const std::exception &ex) {
-            std::cerr << "Warning: skipping line " << (count + 1) << " — " << ex.what() << "\n";
+            std::cerr << "Warning: skipping line " << ex.what() << "\n";
             continue;
         }
 
-        ++count;
+        events.push_back(e);
+    }
 
-        if (firstTs == UINT64_MAX) {
-            firstTs = e.ts_recv;
+    return events;
+}
+
+
+struct DataForSet {
+    MarketDataEvent event;
+    int ind;
+
+    bool operator<(const DataForSet& other) const {
+        if (event < other.event) {
+            return false;
         }
-        lastTs = e.ts_recv;
-
-        if (firstTen.size() < 10) {
-            firstTen.push_back(e);
+        if (other.event < event) {
+            return true; // I invert the comparison here to use priority_queue which uses max-heap by default!!!
         }
 
-        lastTen.push_back(e);
-        if (lastTen.size() > 10) {
-            lastTen.pop_front();
+        return ind < other.ind;
+    }
+};
+
+std::vector<MarketDataEvent> FlatMerge(std::vector<std::vector<MarketDataEvent>>& events_of_files) {
+    int n = events_of_files.size();
+    for (int i = 0; i < n; ++i) {
+        std::reverse(events_of_files[i].begin(), events_of_files[i].end());
+    }
+
+    std::vector<MarketDataEvent> result;
+    std::priority_queue<DataForSet> pq;
+    for (int i = 0; i < n; ++i) {
+        if (!events_of_files[i].empty()) {
+            pq.push({events_of_files[i].back(), i});
+            events_of_files[i].pop_back();
         }
     }
+
+    while(!pq.empty()) {
+        auto [event, ind] = pq.top();
+        pq.pop();
+        result.push_back(event);
+
+        if (!events_of_files[ind].empty()) {
+            pq.push({events_of_files[ind].back(), ind});
+            events_of_files[ind].pop_back();
+        }
+    }
+
+    return result;
 }
 
 int main(int argc, char **argv) {
@@ -234,6 +276,8 @@ int main(int argc, char **argv) {
 
     try {
         if (fs::exists(folder_path) && fs::is_directory(folder_path)) {
+            std::vector<std::vector<MarketDataEvent>> events_of_files;
+            std::mutex mtx;
             for (const auto& file : fs::directory_iterator(folder_path)) {
                 if (fs::is_regular_file(file.path())) {  
                     const std::string filepath = file.path().string();                                                                                                                                                    
@@ -244,22 +288,25 @@ int main(int argc, char **argv) {
 
                     std::cout << "--- Processing file: " << file.path().filename() << " ---\n";
                     
-                    producers.emplace_back([filepath](){
-                        processOneFile(filepath);
+                    producers.emplace_back([filepath, &mtx, &events_of_files](){
+                        std::vector<MarketDataEvent> events = processOneFile(filepath);
+                        std::lock_guard<std::mutex> guard(mtx);
+                        events_of_files.push_back(std::move(events));
                     });
 
                     std::cout << std::endl;
                 }
             }
 
-
             for (auto& t : producers) {
                 if (t.joinable()) {
                     t.join();
                 }
             }
-            std::cout << "All files processed successfully.\n";
 
+            std::cout << "All files processed successfully.\n";
+            std::vector<MarketDataEvent> events = FlatMerge(events_of_files);
+            std::cout << events.size() << std::endl;
         } else {
             std::cerr << "Error: " << folder_path << " is not a valid folder path\n";
             return 1;
