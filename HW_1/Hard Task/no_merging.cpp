@@ -11,7 +11,6 @@
 #include <filesystem>
 #include <thread>
 #include <vector>
-#include <mutex>
 #include <queue>
 
 using json = nlohmann::json;
@@ -265,6 +264,63 @@ std::vector<MarketDataEvent> FlatMerge(std::vector<std::vector<MarketDataEvent>>
     return result;
 }
 
+std::vector<MarketDataEvent> Merge2Vecs(const std::vector<MarketDataEvent>& vec1, const std::vector<MarketDataEvent>& vec2) {
+    std::vector<MarketDataEvent> result;
+    result.reserve(vec1.size() + vec2.size());
+    int left = 0, right = 0;
+    
+    while (left < vec1.size() || right < vec2.size()) {
+        if (left < vec1.size() && right < vec2.size()) {
+            if (vec1[left] < vec2[right]) {
+                result.push_back(vec1[left]);
+                left++;
+            } else {
+                result.push_back(vec2[right]);
+                right++;    
+            }
+            continue;
+        }
+
+        if (left < vec1.size()) {
+            result.push_back(vec1[left]);
+            left++;
+            continue;
+        }
+
+        result.push_back(vec2[right]);
+        right++;
+    }
+
+    return result;
+}
+
+std::vector<MarketDataEvent> HierarchyMerge(const std::vector<std::vector<MarketDataEvent>>& events_of_files) {
+    if (events_of_files.size() == 0) {
+        return {};
+    }
+
+    if (events_of_files.size() == 1) {
+        return events_of_files[0];
+    }
+
+    std::vector<std::vector<MarketDataEvent>> tmp;
+    int left = 0, right = events_of_files.size() - 1;
+
+    while (left <= right) {
+        if (left < right) {
+            tmp.push_back(Merge2Vecs(events_of_files[left], events_of_files[right]));
+            left++;
+            right--;
+            continue;
+        }
+        tmp.push_back(events_of_files[left]);
+        left++;
+        right--;
+    }
+
+    return HierarchyMerge(tmp);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0] << " <ndjson-file>\n";
@@ -276,8 +332,21 @@ int main(int argc, char **argv) {
 
     try {
         if (fs::exists(folder_path) && fs::is_directory(folder_path)) {
-            std::vector<std::vector<MarketDataEvent>> events_of_files;
-            std::mutex mtx;
+            int cnt = 0;
+            for (const auto& file : fs::directory_iterator(folder_path)) {
+                if (fs::is_regular_file(file.path())) {  
+                    const std::string filepath = file.path().string();                                                                                                                                                    
+                    if (filepath.size() < 9 ||
+                        filepath.substr(filepath.size() - 9) != ".mbo.json") { 
+                            continue;
+                    }
+                    cnt++;
+                }
+            }
+
+            std::vector<std::vector<MarketDataEvent>> events_of_files(cnt);
+
+            int curr = 0;
             for (const auto& file : fs::directory_iterator(folder_path)) {
                 if (fs::is_regular_file(file.path())) {  
                     const std::string filepath = file.path().string();                                                                                                                                                    
@@ -288,11 +357,10 @@ int main(int argc, char **argv) {
 
                     std::cout << "--- Processing file: " << file.path().filename() << " ---\n";
                     
-                    producers.emplace_back([filepath, &mtx, &events_of_files](){
-                        std::vector<MarketDataEvent> events = processOneFile(filepath);
-                        std::lock_guard<std::mutex> guard(mtx);
-                        events_of_files.push_back(std::move(events));
+                    producers.emplace_back([curr, filepath, &events_of_files](){
+                        events_of_files[curr] = processOneFile(filepath);
                     });
+                    curr++;
 
                     std::cout << std::endl;
                 }
@@ -305,7 +373,8 @@ int main(int argc, char **argv) {
             }
 
             std::cout << "All files processed successfully.\n";
-            std::vector<MarketDataEvent> events = FlatMerge(events_of_files);
+            std::vector<MarketDataEvent> events1 = FlatMerge(events_of_files);
+            std::vector<MarketDataEvent> events2 = HierarchyMerge(events_of_files);
             std::cout << events.size() << std::endl;
         } else {
             std::cerr << "Error: " << folder_path << " is not a valid folder path\n";
