@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 using json = nlohmann::json;
 
@@ -124,16 +125,11 @@ void processMarketDataEvent(const MarketDataEvent &e) {
             << "\n";
 }
 
-int main(int argc, char **argv) {
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <ndjson-file>\n";
-        return 1;
-    }
-
-    std::ifstream in(argv[1]);
+void processOneFile(const std::string& filename) {
+    std::ifstream in(filename);
     if (!in) {
-        std::cerr << "Error: could not open file: " << argv[1] << "\n";
-        return 1;
+        std::cerr << "Error: could not open file: " << filename << "\n";
+        return;
     }
 
     std::size_t count = 0;
@@ -185,5 +181,14 @@ int main(int argc, char **argv) {
     std::cout << "\nTotal messages : " << count << "\n";
     std::cout << "First ts_recv : " << firstTs << "\n";
     std::cout << "Last ts_recv : " << lastTs << "\n";
+}
+
+int main(int argc, char **argv) {
+    if (argc != 2) {
+        std::cerr << "Usage: " << argv[0] << " <ndjson-file>\n";
+        return 1;
+    }
+
+    processOneFile(argv[1]);
     return 0;
 }
