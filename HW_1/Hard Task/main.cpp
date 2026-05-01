@@ -10,6 +10,7 @@
 #include <filesystem>
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 struct MarketDataEvent {
     std::string ts_recv = "";
@@ -189,6 +190,25 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    processOneFile(argv[1]);
+    std::string folder_path = argv[1];
+
+    try {
+        if (fs::exists(folder_path) && fs::is_directory(folder_path)) {
+            for (const auto& file : fs::directory_iterator(folder_path)) {
+                if (fs::is_regular_file(file.path())) {
+                    std::cout << "--- Processing file: " << file.path().filename() << " ---\n";
+                    processOneFile(file.path().string());
+                    std::cout << std::endl;
+                }
+            }
+        } else {
+            std::cerr << "Error: " << folder_path << " is not a valid folder path\n";
+            return 1;
+        }
+    } catch (const fs::filesystem_error& ex) {
+        std::cerr << "Filesystem error: " << ex.what() << "\n";
+        return 1;
+    }
+
     return 0;
 }
