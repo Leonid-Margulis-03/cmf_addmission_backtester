@@ -1,0 +1,11 @@
+DATA="XEUR-20260409-HJTR7RCAKT" 
+
+=== Run 1 ===
+[FlatMerge] msgs=15175617 parse=412.69s merge+dispatch=18.5204s total=431.21s throughput=35193.1 msgs/s
+[HierarchyMerge] msgs=15175617 parse=423.538s merge+dispatch=33.3137s total=456.851s throughput=33217.8 msgs/s
+=== Run 2 ===
+[FlatMerge] msgs=15175617 parse=424.439s merge+dispatch=19.8946s total=444.333s throughput=34153.7 msgs/s
+[HierarchyMerge] msgs=15175617 parse=428.725s merge+dispatch=38.6282s total=467.353s throughput=32471.4 msgs/s
+=== Run 3 ===
+[FlatMerge] msgs=15175617 parse=436.521s merge+dispatch=18.5987s total=455.119s throughput=33344.3 msgs/s
+[HierarchyMerge] msgs=15175617 parse=440.186s merge+dispatch=38.997s total=479.183s throughput=31669.8 msgs/s

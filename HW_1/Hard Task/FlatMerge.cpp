@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 #include <queue>
+#include <chrono>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -332,6 +333,7 @@ int main(int argc, char **argv) {
 
     try {
         if (fs::exists(folder_path) && fs::is_directory(folder_path)) {
+            auto p0 = std::chrono::steady_clock::now();
             int cnt = 0;
             for (const auto& file : fs::directory_iterator(folder_path)) {
                 if (fs::is_regular_file(file.path())) {  
@@ -372,7 +374,14 @@ int main(int argc, char **argv) {
                 }
             }
 
+            auto p1 = std::chrono::steady_clock::now();
             std::cout << "All files processed successfully.\n";
+
+            // Silence stdout — printing 31M lines from the dispatcher would dominate wall-clock.
+            std::ofstream null_sink("/dev/null");
+            auto* old_buf = std::cout.rdbuf(null_sink.rdbuf());
+
+            auto m0 = std::chrono::steady_clock::now();
             std::vector<MarketDataEvent> merged = FlatMerge(events_of_files);
             
             std::thread dispatcher([&merged]() {                                                                                                                                                                                                  
@@ -381,6 +390,21 @@ int main(int argc, char **argv) {
                 }
             });                                                                                                                                                                                                                                   
             dispatcher.join();
+            auto m1 = std::chrono::steady_clock::now();
+
+            std::cout.rdbuf(old_buf);  // restore stdout for the report
+
+            double parse_s = std::chrono::duration<double>(p1 - p0).count();
+            double merge_s = std::chrono::duration<double>(m1 - m0).count();
+            double total_s = parse_s + merge_s;
+            std::size_t msgs = merged.size();
+
+            std::cerr << "[FlatMerge]"
+                      << " msgs=" << msgs
+                      << " parse=" << parse_s << "s"
+                      << " merge+dispatch=" << merge_s << "s"
+                      << " total=" << total_s << "s"
+                      << " throughput=" << (msgs / total_s) << " msgs/s\n";
 
         } else {
             std::cerr << "Error: " << folder_path << " is not a valid folder path\n";

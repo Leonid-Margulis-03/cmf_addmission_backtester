@@ -1,0 +1,17 @@
+# Flat
+g++ -std=c++17 -O3 -DNDEBUG -pthread -I/opt/homebrew/include FlatMerge.cpp -o flat
+
+# Hierarchy
+g++ -std=c++17 -O3 -DNDEBUG -pthread -I/opt/homebrew/include Hierarchy.cpp -o hier
+
+DATA="/Users/leo/Documents/GitHub/cmf_addmission_backtester/cmf_addmission_backtester/HW_1/XEUR-20260409-HJTR7RCAKT"   
+
+# Warm disk cache so neither merger pays the cold-I/O penalty unfairly                                                                                                                                                                
+./flat "$DATA" > /dev/null 2>/dev/null                                                                                                                                                                                                
+                                                                                                                                                                                                                                
+# Real runs — alternate to keep cache state symmetric                                                                                                                                                                                 
+for i in 1 2 3; do                                                                                                                                                                                                                    
+    echo "=== Run $i ==="                                                                                                                                                                                                               
+    ./flat "$DATA" 2>&1 >/dev/null | grep '^\['                                                                                                                                                                                         
+    ./hier "$DATA" 2>&1 >/dev/null | grep '^\['                                                                                                                                                                                         
+done  
