@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <thread>
+#include <vector>
+#include <mutex>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -169,19 +172,19 @@ void processOneFile(const std::string& filename) {
         }
     }
 
-    std::cout << "First 10 events\n";
-    for (const auto &e : firstTen) {
-        processMarketDataEvent(e);
-    }
+    // std::cout << "First 10 events\n";
+    // for (const auto &e : firstTen) {
+    //     processMarketDataEvent(e);
+    // }
 
-    std::cout << "\nLast 10 events\n";
-    for (const auto &e : lastTen) {
-        processMarketDataEvent(e);
-    }
+    // std::cout << "\nLast 10 events\n";
+    // for (const auto &e : lastTen) {
+    //     processMarketDataEvent(e);
+    // }
 
-    std::cout << "\nTotal messages : " << count << "\n";
-    std::cout << "First ts_recv : " << firstTs << "\n";
-    std::cout << "Last ts_recv : " << lastTs << "\n";
+    // std::cout << "\nTotal messages : " << count << "\n";
+    // std::cout << "First ts_recv : " << firstTs << "\n";
+    // std::cout << "Last ts_recv : " << lastTs << "\n";
 }
 
 int main(int argc, char **argv) {
@@ -191,16 +194,36 @@ int main(int argc, char **argv) {
     }
 
     std::string folder_path = argv[1];
+    std::vector<std::thread> producers;
 
     try {
         if (fs::exists(folder_path) && fs::is_directory(folder_path)) {
             for (const auto& file : fs::directory_iterator(folder_path)) {
-                if (fs::is_regular_file(file.path())) {
+                if (fs::is_regular_file(file.path())) {  
+                    const std::string filepath = file.path().string();                                                                                                                                                    
+                    if (filepath.size() < 9 ||
+                        filepath.substr(filepath.size() - 9) != ".mbo.json") { 
+                            continue;
+                    }
+
                     std::cout << "--- Processing file: " << file.path().filename() << " ---\n";
-                    processOneFile(file.path().string());
+                    
+                    producers.emplace_back([filepath](){
+                        processOneFile(filepath);
+                    });
+
                     std::cout << std::endl;
                 }
             }
+
+
+            for (auto& t : producers) {
+                if (t.joinable()) {
+                    t.join();
+                }
+            }
+            std::cout << "All files processed successfully.\n";
+
         } else {
             std::cerr << "Error: " << folder_path << " is not a valid folder path\n";
             return 1;
