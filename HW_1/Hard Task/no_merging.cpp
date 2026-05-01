@@ -171,20 +171,6 @@ void processOneFile(const std::string& filename) {
             lastTen.pop_front();
         }
     }
-
-    // std::cout << "First 10 events\n";
-    // for (const auto &e : firstTen) {
-    //     processMarketDataEvent(e);
-    // }
-
-    // std::cout << "\nLast 10 events\n";
-    // for (const auto &e : lastTen) {
-    //     processMarketDataEvent(e);
-    // }
-
-    // std::cout << "\nTotal messages : " << count << "\n";
-    // std::cout << "First ts_recv : " << firstTs << "\n";
-    // std::cout << "Last ts_recv : " << lastTs << "\n";
 }
 
 int main(int argc, char **argv) {
