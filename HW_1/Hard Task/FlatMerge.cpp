@@ -373,9 +373,15 @@ int main(int argc, char **argv) {
             }
 
             std::cout << "All files processed successfully.\n";
-            std::vector<MarketDataEvent> events1 = FlatMerge(events_of_files);
-            std::vector<MarketDataEvent> events2 = HierarchyMerge(events_of_files);
-            std::cout << events.size() << std::endl;
+            std::vector<MarketDataEvent> merged = FlatMerge(events_of_files);
+            
+            std::thread dispatcher([&merged]() {                                                                                                                                                                                                  
+                for (const auto& e : merged) {                                                                                                                                                                                                    
+                    processMarketDataEvent(e);                                                                                                                                                                                                    
+                }
+            });                                                                                                                                                                                                                                   
+            dispatcher.join();
+
         } else {
             std::cerr << "Error: " << folder_path << " is not a valid folder path\n";
             return 1;
