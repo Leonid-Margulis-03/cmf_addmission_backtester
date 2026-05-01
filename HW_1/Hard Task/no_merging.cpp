@@ -1,5 +1,6 @@
 #include <climits>
 #include <cstdint>
+#include <ctime>
 #include <deque>
 #include <fstream>
 #include <iostream>
@@ -16,8 +17,8 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 struct MarketDataEvent {
-    std::string ts_recv = "";
-    std::string ts_event = "";
+    uint64_t ts_recv = UINT64_MAX;
+    uint64_t ts_event = UINT64_MAX;
     uint8_t rtype = 0;
     uint16_t publisher_id = 0;
     uint32_t instrument_id = UINT32_MAX;
@@ -68,13 +69,62 @@ static int64_t parsePrice(const std::string &s) {
     return result;
 }
 
+static uint64_t parseTimestamp(const std::string &s) {
+    if (s.empty()) {
+        return UINT64_MAX;
+    }
+    // Expected format: YYYY-MM-DDTHH:MM:SS[.fraction]Z
+    std::tm tm{};
+    tm.tm_year = std::stoi(s.substr(0, 4)) - 1900;
+    tm.tm_mon  = std::stoi(s.substr(5, 2)) - 1;
+    tm.tm_mday = std::stoi(s.substr(8, 2));
+    tm.tm_hour = std::stoi(s.substr(11, 2));
+    tm.tm_min  = std::stoi(s.substr(14, 2));
+    tm.tm_sec  = std::stoi(s.substr(17, 2));
+    time_t secs = timegm(&tm);
+
+    uint64_t ns = 0;
+    auto dot = s.find('.');
+    if (dot != std::string::npos) {
+        std::string frac = s.substr(dot + 1);
+        if (!frac.empty() && frac.back() == 'Z') {
+            frac.pop_back();
+        }
+        if (frac.size() < 9) {
+            frac.append(9 - frac.size(), '0');
+        } else {
+            frac = frac.substr(0, 9);
+        }
+        for (char c : frac) {
+            ns = ns * 10 + (c - '0');
+        }
+    }
+    return static_cast<uint64_t>(secs) * 1'000'000'000ULL + ns;
+}
+
+static std::string formatTimestamp(uint64_t ns) {
+    if (ns == UINT64_MAX) {
+        return "UNDEF";
+    }
+    time_t secs = static_cast<time_t>(ns / 1'000'000'000ULL);
+    uint64_t frac = ns % 1'000'000'000ULL;
+    std::tm tm{};
+    gmtime_r(&secs, &tm);
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%09lluZ",
+                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                  tm.tm_hour, tm.tm_min, tm.tm_sec,
+                  static_cast<unsigned long long>(frac));
+    return buf;
+}
+
 MarketDataEvent parseEvent(const json &j) {
     MarketDataEvent e;
 
-    e.ts_recv = j.value("ts_recv", "");
+    e.ts_recv = parseTimestamp(j.value("ts_recv", ""));
 
     const auto &hd = j.at("hd");
-    e.ts_event = hd.value("ts_event", "");
+    e.ts_event = parseTimestamp(hd.value("ts_event", ""));
     e.rtype = hd.value("rtype", uint8_t{0});
     e.publisher_id = hd.value("publisher_id", uint16_t{0});
     e.instrument_id = hd.value("instrument_id", uint32_t{0});
@@ -120,7 +170,7 @@ void processMarketDataEvent(const MarketDataEvent &e) {
     priceStr = buf;
     }
 
-    std::cout << "ts_event=" << e.ts_event
+    std::cout << "ts_event=" << formatTimestamp(e.ts_event)
             << " order_id=" << e.order_id
             << " side=" << e.side
             << " price=" << priceStr
@@ -137,7 +187,7 @@ void processOneFile(const std::string& filename) {
     }
 
     std::size_t count = 0;
-    std::string firstTs, lastTs;
+    uint64_t firstTs = UINT64_MAX, lastTs = UINT64_MAX;
     std::vector<MarketDataEvent> firstTen;
     std::deque<MarketDataEvent> lastTen;
 
@@ -157,7 +207,7 @@ void processOneFile(const std::string& filename) {
 
         ++count;
 
-        if (firstTs.empty()) {
+        if (firstTs == UINT64_MAX) {
             firstTs = e.ts_recv;
         }
         lastTs = e.ts_recv;
