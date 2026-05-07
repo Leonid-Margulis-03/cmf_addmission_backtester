@@ -1,12 +1,5 @@
 .DS_Store
 .idea/
-HW_1/XEUR-*/
-HW_1/*.zip
-HW_1/main
-HW_1/documentation.pdf
-HW_1/Reference_data_enums.pdf
-HW_1/.DS_Store
-HW_1/example_json.cpp
-HW_1/Hard Task/flat
-HW_1/Hard Task/hier
-HW_1/Backtester Files/Data
+1. Standard and Hard Backtester/Data
+1.5 Backtester and Strategy evaluation/MD
+1.5 Backtester and Strategy evaluation/jsons examples

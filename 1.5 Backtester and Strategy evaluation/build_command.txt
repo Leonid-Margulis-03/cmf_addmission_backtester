@@ -1,0 +1,1 @@
+g++ -std=c++17 -O3 -DNDEBUG -pthread -I/opt/homebrew/include main.cpp -o main
