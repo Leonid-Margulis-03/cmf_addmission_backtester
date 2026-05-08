@@ -61,6 +61,11 @@ private:
         static constexpr size_t N = 2000;
     };
 public:
+    StrategyAvellanedaStoikov() {
+        pnl_log_.open("pnl_log.csv");
+        pnl_log_ << "t,mid,q,x,pnl,sigma,spread\n";
+    }
+
     void BookUpdate(const BookSnapshot& bookSnapshot) {
 //        s = (bookSnapshot.bid_price[0] + bookSnapshot.ask_price[0]) / 2;
         s = (bookSnapshot.bid_price[0] * bookSnapshot.ask_amount[0] + bookSnapshot.ask_price[0] * bookSnapshot.bid_amount[0])
@@ -97,6 +102,12 @@ public:
                       << " q=" << q
                       << " x=" << x
                       << "\n";
+        }
+        if (book_update_count_ % pnl_log_every_ == 0) {
+            double pnl = x + q * s;
+            double spread_now = (sigma > 0.0) ? OptimalSpread() : 0.0;
+            pnl_log_ << t << "," << s << "," << q << "," << x << ","
+                     << pnl << "," << sigma << "," << spread_now << "\n";
         }
     }
 
@@ -162,6 +173,9 @@ private:
     uint64_t buys_  = 0;
     uint64_t sells_ = 0;
     double   turnover_ = 0.0;
+
+    std::ofstream pnl_log_;
+    static constexpr uint64_t pnl_log_every_ = 1000;
 };
 
 template <class Strat>
