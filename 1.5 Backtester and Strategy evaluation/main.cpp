@@ -11,6 +11,45 @@
 
 using namespace std;
 
+struct Config {
+    double gamma = 0.1;
+    double k = 1e6;
+    double horizon_seconds = 3600.0;
+    size_t vol_window = 2000;
+    std::string lob_path = "MD/lob.csv";
+    std::string trades_path = "MD/trades.csv";
+    std::string pnl_log_path = "pnl_log.csv";
+    std::string results_csv = "results.csv";
+    std::string config_id = "default";
+    bool use_inventory_skew = true;
+};
+
+inline Config load_config(const std::string& path) {
+    Config c;
+    std::ifstream f(path);
+    if (!f.is_open()) throw std::runtime_error("cannot open config: " + path);
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        if      (key == "gamma")              c.gamma = std::stod(val);
+        else if (key == "k")                  c.k = std::stod(val);
+        else if (key == "horizon_seconds")    c.horizon_seconds = std::stod(val);
+        else if (key == "vol_window")         c.vol_window = std::stoul(val);
+        else if (key == "lob_path")           c.lob_path = val;
+        else if (key == "trades_path")        c.trades_path = val;
+        else if (key == "pnl_log_path")       c.pnl_log_path = val;
+        else if (key == "results_csv")        c.results_csv = val;
+        else if (key == "config_id")          c.config_id = val;
+        else if (key == "use_inventory_skew") c.use_inventory_skew = (val == "true" || val == "1");
+    }
+    return c;
+}
+
+
 class StrategyAvellanedaStoikov {
 private:
     struct MyQuote {
@@ -21,6 +60,8 @@ private:
 
     class VolatilityHandler {
     public:
+        explicit VolatilityHandler(size_t N) : N_(N) {}
+
         void Update(double s, double t) {
             if (last_s == -1) {
                 last_s = s;
@@ -36,7 +77,7 @@ private:
             sum_ds2_ += diff_s * diff_s;
             sum_dt_ += diff_t;
 
-            if (window_.size() > N) {
+            if (window_.size() > N_) {
                 sum_ds2_ -= window_.front().first;
                 sum_dt_ -= window_.front().second;
 
@@ -58,11 +99,20 @@ private:
         double sum_dt_ = 0;
         double last_s = -1;
         double last_t = 0;
-        static constexpr size_t N = 2000;
+        size_t N_;
     };
+
 public:
-    StrategyAvellanedaStoikov() {
-        pnl_log_.open("pnl_log.csv");
+    explicit StrategyAvellanedaStoikov(const Config& cfg)
+        : risk_aversion(cfg.gamma)
+        , k(cfg.k)
+        , horizon_seconds_(cfg.horizon_seconds)
+        , volatilityHandler(cfg.vol_window)
+        , use_inventory_skew_(cfg.use_inventory_skew)
+        , config_id_(cfg.config_id)
+        , results_csv_path_(cfg.results_csv)
+    {
+        pnl_log_.open(cfg.pnl_log_path);
         pnl_log_ << "t,mid,q,x,pnl,sigma,spread\n";
     }
 
@@ -74,12 +124,12 @@ public:
         volatilityHandler.Update(s, t);
 
         if (std::isnan(T) || t >= T) {
-            T = t + horizon_seconds;
+            T = t + horizon_seconds_;
         }
 
         double sigma = volatilityHandler.GetSigma();
         if (sigma > 0.0) {
-            double r = ReservationPrice();
+            double r = use_inventory_skew_ ? ReservationPrice() : s;
             double delta = OptimalSpread();
 
             my_ask.price = r + delta / 2.0;
@@ -93,12 +143,13 @@ public:
 
         ++book_update_count_;
         if (book_update_count_ % 10000 == 0) {
+            double sigma2 = volatilityHandler.GetSigma();
             std::cout << "n=" << book_update_count_
                       << " s=" << s
-                      << " sigma=" << sigma
+                      << " sigma=" << sigma2
                       << " T-t=" << (T - t)
-                      << " r=" << (sigma > 0 ? ReservationPrice() : 0.0)
-                      << " spread=" << (sigma > 0 ? OptimalSpread() : 0.0)
+                      << " r=" << (sigma2 > 0 ? (use_inventory_skew_ ? ReservationPrice() : s) : 0.0)
+                      << " spread=" << (sigma2 > 0 ? OptimalSpread() : 0.0)
                       << " q=" << q
                       << " x=" << x
                       << "\n";
@@ -145,6 +196,37 @@ public:
                   << "PNL = " << pnl             << "\n";
     }
 
+    void Finalize() {
+        double pnl = x + q * s;
+        // Check if results file exists to decide whether to write header
+        bool write_header = false;
+        {
+            std::ifstream check(results_csv_path_);
+            write_header = !check.is_open();
+        }
+        std::ofstream out(results_csv_path_, std::ios::app);
+        if (!out.is_open()) {
+            std::cerr << "warning: cannot open results file: " << results_csv_path_ << "\n";
+            return;
+        }
+        if (write_header) {
+            out << "config_id,gamma,use_inventory_skew,book_updates,total_fills,"
+                   "buys,sells,final_q,final_x,final_mid,turnover,pnl\n";
+        }
+        out << config_id_ << ","
+            << risk_aversion << ","
+            << (use_inventory_skew_ ? "true" : "false") << ","
+            << book_update_count_ << ","
+            << (buys_ + sells_) << ","
+            << buys_ << ","
+            << sells_ << ","
+            << q << ","
+            << x << ","
+            << s << ","
+            << turnover_ << ","
+            << pnl << "\n";
+    }
+
 private:
     double ReservationPrice() {
         double sigma = volatilityHandler.GetSigma();
@@ -165,7 +247,7 @@ private:
     double T = std::nan("");
     double x = 0; // cash position
 
-    static constexpr double horizon_seconds = 3600.0;
+    double horizon_seconds_;
     double risk_aversion = 100;
     VolatilityHandler volatilityHandler;
     double k = 1e6; // TODO
@@ -174,9 +256,14 @@ private:
     uint64_t sells_ = 0;
     double   turnover_ = 0.0;
 
+    bool        use_inventory_skew_ = true;
+    std::string config_id_;
+    std::string results_csv_path_;
+
     std::ofstream pnl_log_;
     static constexpr uint64_t pnl_log_every_ = 1000;
 };
+
 
 template <class Strat>
 void replay(const string& lob_path, const string& trade_path, Strat& strat) {
@@ -210,12 +297,16 @@ void replay(const string& lob_path, const string& trade_path, Strat& strat) {
     }
 }
 
-int main(int argc, char **argv) {
-    StrategyAvellanedaStoikov strategyAvellanedaStoikov;
-    const string& lob_path = "MD/lob.csv";
-    const string& trades_path = "MD/trades.csv";
 
-    replay(lob_path, trades_path, strategyAvellanedaStoikov);
-    strategyAvellanedaStoikov.Summary();
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        std::cerr << "usage: " << argv[0] << " <config.cfg>\n";
+        return 1;
+    }
+    Config cfg = load_config(argv[1]);
+    StrategyAvellanedaStoikov strategy(cfg);
+    replay(cfg.lob_path, cfg.trades_path, strategy);
+    strategy.Summary();
+    strategy.Finalize();
     return 0;
 }
